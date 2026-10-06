@@ -25,7 +25,16 @@ Reporters are credited in the advisory unless they request anonymity.
 
 ## Threat Model Summary
 
-etsy-mcp brokers OAuth tokens and buyer PII from the Etsy API. The principal threats:
+With `ETSY_BROKER_URL` / `ETSY_BROKER_KEY` configured, refresh tokens and their
+persistence belong solely to the private token service. MCP requests access
+tokens and never falls back to local OAuth. Broker keys join the F3 sensitive
+field list; redirects are disabled for broker and Etsy application requests.
+Keep plain HTTP confined to a trusted same-host network. Broker login/logout are
+administered on the service; `auth info` exposes only allowlisted metadata.
+See [TOKEN_SERVICE.md](docs/TOKEN_SERVICE.md) for migration/recovery.
+
+etsy-mcp brokers OAuth tokens and buyer PII from the Etsy API. The principal threats
+below describe the standalone OAuth flow unless stated otherwise:
 
 | Threat | Mitigation |
 |---|---|

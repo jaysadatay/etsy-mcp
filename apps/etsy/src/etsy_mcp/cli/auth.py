@@ -28,6 +28,7 @@ from typing import Any
 
 from etsy_core.auth import DEFAULT_SCOPES, EtsyAuth, default_config_dir, default_token_path
 from etsy_core.exceptions import EtsyAuthError
+from etsy_core.token_service import TokenServiceAuth
 
 logger = logging.getLogger(__name__)
 
@@ -110,9 +111,7 @@ def _run_callback_server_until_received(
         return _CallbackHandler(*args, state_holder=state, **kwargs)
 
     try:
-        server = http.server.HTTPServer(
-            (CALLBACK_HOST, CALLBACK_PORT), handler_factory
-        )
+        server = http.server.HTTPServer((CALLBACK_HOST, CALLBACK_PORT), handler_factory)
     except OSError as exc:
         raise EtsyAuthError(
             f"Cannot bind OAuth callback server on {CALLBACK_HOST}:{CALLBACK_PORT}: "
@@ -147,10 +146,7 @@ def _require_credentials() -> tuple[str, str]:
             "and export ETSY_KEYSTRING=<your_keystring>."
         )
     if not shared_secret:
-        raise EtsyAuthError(
-            "ETSY_SHARED_SECRET env var is not set. "
-            "Export ETSY_SHARED_SECRET=<your_shared_secret>."
-        )
+        raise EtsyAuthError("ETSY_SHARED_SECRET env var is not set. Export ETSY_SHARED_SECRET=<your_shared_secret>.")
     return keystring, shared_secret
 
 
@@ -239,6 +235,29 @@ def auth_cli(args: list[str]) -> None:
 
     cmd = args[0]
 
+    # Use the same configuration/factory as the server. Broker mode must never
+    # create, refresh or delete a separate local copy of the shared Etsy grant.
+    from etsy_mcp.runtime import get_auth, get_config
+
+    cfg = get_config().etsy
+    if getattr(cfg, "broker_url", "") or getattr(cfg, "broker_key", ""):
+        try:
+            auth = get_auth()
+            if not isinstance(auth, TokenServiceAuth):
+                raise EtsyAuthError("Token-service configuration could not be loaded.")
+            if cmd == "info":
+                asyncio.run(_broker_info(auth))
+                return
+            if cmd in {"login", "logout"}:
+                raise EtsyAuthError(
+                    "Authentication is managed by the Etsy token service. "
+                    "Import/replace tokens using its local seed command. To disconnect only this MCP server, "
+                    "remove or rotate its broker client key; shared Etsy tokens must not be deleted here."
+                )
+        except EtsyAuthError as exc:
+            print(f"Error: {exc.message}", file=sys.stderr)
+            sys.exit(1)
+
     if cmd == "login":
         scopes: tuple[str, ...] = DEFAULT_SCOPES
         # Parse --scope flag (comma or space separated)
@@ -263,3 +282,18 @@ def auth_cli(args: list[str]) -> None:
     print(f"Unknown auth command: {cmd}", file=sys.stderr)
     print("Usage: etsy-mcp auth <login|info|logout>", file=sys.stderr)
     sys.exit(1)
+
+
+async def _broker_info(auth: TokenServiceAuth) -> None:
+    """Inspect metadata without returning tokens or triggering a refresh."""
+    from etsy_core.exceptions import EtsyRateLimitError
+
+    try:
+        data = await auth.get_status()
+        print("Authentication: Etsy token service")
+        for key, value in data.items():
+            print(f"{key}: {value}")
+    except EtsyRateLimitError as exc:
+        raise EtsyAuthError(exc.message) from None
+    finally:
+        await auth.close()

@@ -1,6 +1,6 @@
 # Privacy Policy
 
-**Last updated:** 2026-04-15
+**Last updated:** 2026-10-06
 
 ## Summary
 
@@ -17,7 +17,7 @@ etsy-mcp runs locally on your machine. Your agent (Claude Code, Claude Desktop, 
 ## What we don't collect
 
 - **No telemetry.** Zero usage data, error reports, or analytics.
-- **No phone-home.** etsy-mcp connects only to `api.etsy.com` and `www.etsy.com` (auth). Nothing else.
+- **No phone-home.** Etsy requests go to `api.etsy.com` and `www.etsy.com` (standalone auth). When configured, MCP also contacts your private token service for access tokens and status; no Etsy shop/buyer data is sent to that service.
 - **No persistent storage of buyer data.** Buyer information is fetched on-demand and held in memory only for the duration of the tool call.
 - **No tracking.** No cookies, no fingerprinting.
 
@@ -74,7 +74,7 @@ The `transactions_*` and `address_*` scopes are the only ones that expose buyer 
 
 ## Token storage
 
-OAuth tokens live at `~/.config/etsy-mcp/tokens.json` with file mode `0600` and parent directory mode `0700`. They are never transmitted anywhere except back to Etsy on token refresh. See [SECURITY.md](SECURITY.md) for the full token threat model.
+In standalone mode, OAuth tokens live at `~/.config/etsy-mcp/tokens.json` with file mode `0600` and parent directory mode `0700`. In token-service mode, refresh tokens remain on your private service and access tokens are retrieved into MCP memory. MCP authenticates to that service using `ETSY_BROKER_KEY`; it does not send the Etsy application secret to the broker. See [SECURITY.md](SECURITY.md) and [TOKEN_SERVICE.md](docs/TOKEN_SERVICE.md).
 
 ## Questions
 

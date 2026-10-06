@@ -47,6 +47,24 @@ uv add etsy-mcp
 
 ### Authenticate
 
+For shared n8n/MCP authentication, configure the private Etsy token service:
+
+```dotenv
+ETSY_KEYSTRING=your_etsy_app_keystring
+ETSY_SHARED_SECRET=your_etsy_app_shared_secret
+ETSY_BROKER_URL=http://etsy-token:8080
+ETSY_BROKER_KEY=the_token_services_client_keys_mcp_value
+```
+
+Pass these variables to the MCP process. From this checkout, run
+`uv run --package etsy-mcp etsy-mcp auth info` to inspect the service. MCP ignores
+local tokens in this mode; only the service refreshes them. See
+[docs/TOKEN_SERVICE.md](docs/TOKEN_SERVICE.md) for migration and Docker/host setup.
+Run this checkout containing the change; the upstream PyPI package does not
+automatically include changes from this fork.
+
+For standalone authentication without broker variables:
+
 ```bash
 etsy-mcp auth login
 ```
@@ -68,17 +86,34 @@ Or in `claude_desktop_config.json`:
       "command": "uvx",
       "args": ["etsy-mcp@latest"],
       "env": {
-        "ETSY_KEYSTRING": "your-app-keystring"
+        "ETSY_KEYSTRING": "your-app-keystring",
+        "ETSY_SHARED_SECRET": "your-app-shared-secret"
       }
     }
   }
 }
 ```
 
+## Configuration
+
+| Variable | Required | Purpose |
+|---|---|---|
+| `ETSY_KEYSTRING` | Yes | Etsy application keystring |
+| `ETSY_SHARED_SECRET` | In broker mode | Etsy application shared secret |
+| `ETSY_BROKER_URL` | With broker key | Service base URL, e.g. `http://etsy-token:8080` |
+| `ETSY_BROKER_KEY` | With broker URL | Token service `client_keys.mcp`, not an Etsy token |
+| `ETSY_BROKER_TIMEOUT_SECONDS` | No | Broker timeout; default 60 seconds |
+| `ETSY_TOKEN_STORE` | Standalone only | Local token file override |
+| `ETSY_REFRESH_TOKEN` | Standalone only | Bootstrap from an existing refresh token |
+
+Either broker variable selects broker mode; incomplete configuration fails instead
+of using local OAuth. See `.env.example` for other server settings.
+
 ## Documentation
 
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — package layering and responsibilities
 - [docs/OAUTH.md](docs/OAUTH.md) — full PKCE flow and token rotation
+- [docs/TOKEN_SERVICE.md](docs/TOKEN_SERVICE.md) — shared n8n/MCP token-service authentication
 - [docs/RATE_LIMITS.md](docs/RATE_LIMITS.md) — token bucket, daily counter, backoff
 - [docs/ERROR_HANDLING.md](docs/ERROR_HANDLING.md) — exception hierarchy and envelope shapes
 - [docs/TESTING.md](docs/TESTING.md) — unit and integration test strategy
@@ -88,7 +123,7 @@ Or in `claude_desktop_config.json`:
 
 ## Security notice
 
-Tokens are stored locally at `~/.config/etsy-mcp/tokens.json` with mode `0600`. Refresh tokens rotate on every refresh — Etsy invalidates the old one immediately. The F3 redaction layer scrubs OAuth tokens, buyer PII (`email`, `first_name`, `last_name`, `name`, `etsy_user_id`), and shop credentials from every log line, error envelope, and tool response. Report vulnerabilities per [SECURITY.md](SECURITY.md) — never via public issues.
+In token-service mode, refresh tokens stay on the private service; MCP obtains access tokens in memory and never falls back to local OAuth. In standalone mode, tokens are stored at `~/.config/etsy-mcp/tokens.json` with mode `0600`, and the latest refresh response is persisted. The F3 redaction layer scrubs OAuth tokens, broker keys, buyer PII and shop credentials. Report vulnerabilities per [SECURITY.md](SECURITY.md) — never via public issues.
 
 ## Contributing
 

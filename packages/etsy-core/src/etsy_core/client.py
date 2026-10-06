@@ -41,6 +41,7 @@ from etsy_core.exceptions import (
 from etsy_core.rate_limiter import DailyBudgetExceeded, DailyCounter, _TokenBucket
 from etsy_core.redaction import redact_sensitive
 from etsy_core.retry import build_retry_config
+from etsy_core.token_service import TokenServiceAuth, is_access_token_rejection
 
 logger = logging.getLogger(__name__)
 
@@ -58,7 +59,7 @@ class EtsyClient:
 
     def __init__(
         self,
-        auth: EtsyAuth,
+        auth: EtsyAuth | TokenServiceAuth,
         *,
         base_url: str = DEFAULT_BASE_URL,
         timeout: float = DEFAULT_TIMEOUT,
@@ -94,7 +95,7 @@ class EtsyClient:
             self._http = httpx.AsyncClient(
                 timeout=self.timeout,
                 limits=httpx.Limits(max_connections=20, max_keepalive_connections=10),
-                follow_redirects=True,
+                follow_redirects=False,
             )
         return self._http
 
@@ -103,6 +104,8 @@ class EtsyClient:
         if self._http is not None:
             await self._http.aclose()
             self._http = None
+        if isinstance(self.auth, TokenServiceAuth):
+            await self.auth.close()
 
     # -------------------------------------------------------------------------
     # Core request methods
@@ -182,10 +185,15 @@ class EtsyClient:
         except DailyBudgetExceeded as exc:
             raise EtsyRateLimitError(str(exc), request_id=request_id) from exc
 
-        # Get auth token (may trigger refresh)
+        # Keep broker token/version together in this request's local scope.
+        broker_token = None
         try:
-            access_token = await self.auth.get_access_token()
-        except EtsyAuthError:
+            if isinstance(self.auth, TokenServiceAuth):
+                broker_token = await self.auth.get_token()
+                access_token = broker_token.access_token
+            else:
+                access_token = await self.auth.get_access_token()
+        except (EtsyAuthError, EtsyRateLimitError):
             raise  # Re-raise as-is
         except Exception as exc:  # pragma: no cover — unexpected auth error
             raise EtsyAuthError(f"Unexpected auth failure: {exc.__class__.__name__}", request_id=request_id) from exc
@@ -207,21 +215,52 @@ class EtsyClient:
         )
 
         client = await self._ensure_open()
+        recovered = False
+
+        async def send_idempotent() -> httpx.Response:
+            nonlocal broker_token, recovered
+            response = await client.request(
+                method,
+                url,
+                headers=headers,
+                params=params,
+                json=json,
+                data=data,
+                files=files,
+            )
+            if (
+                not recovered
+                and broker_token is not None
+                and isinstance(self.auth, TokenServiceAuth)
+                and is_access_token_rejection(response)
+            ):
+                recovered = True
+                await response.aclose()
+                broker_token = await self.auth.get_token(rejected_version=broker_token.version)
+                headers["Authorization"] = f"Bearer {broker_token.access_token}"
+                # The recovery retry also counts against Etsy's rate/budget limits.
+                await self._rate_limiter.acquire()
+                try:
+                    await self._daily_counter.increment()
+                except DailyBudgetExceeded as exc:
+                    raise EtsyRateLimitError(str(exc), request_id=request_id) from exc
+                response = await client.request(
+                    method,
+                    url,
+                    headers=headers,
+                    params=params,
+                    json=json,
+                    data=data,
+                    files=files,
+                )
+            return response
 
         if idempotent:
             # Retry wrapper for idempotent operations
             try:
-                async for attempt in self._retry_config:
+                async for attempt in self._retry_config.copy():
                     with attempt:
-                        response = await client.request(
-                            method,
-                            url,
-                            headers=headers,
-                            params=params,
-                            json=json,
-                            data=data,
-                            files=files,
-                        )
+                        response = await send_idempotent()
                         response.raise_for_status()
             except RetryError as exc:
                 inner = exc.last_attempt.exception() if exc.last_attempt else exc
@@ -242,6 +281,21 @@ class EtsyClient:
                     data=data,
                     files=files,
                 )
+                if (
+                    broker_token is not None
+                    and isinstance(self.auth, TokenServiceAuth)
+                    and is_access_token_rejection(response)
+                ):
+                    # Notify the sole refresh owner, but NEVER replay this write.
+                    await response.aclose()
+                    await self.auth.get_token(rejected_version=broker_token.version)
+                    raise EtsyAuthError(
+                        "Etsy rejected the access token; a current token was obtained from the token service. "
+                        "The write was not retried. Verify Etsy state before submitting it again.",
+                        status=401,
+                        path=path,
+                        request_id=request_id,
+                    )
                 response.raise_for_status()
             except httpx.TimeoutException as exc:
                 raise EtsyPossiblyCompletedError(
@@ -318,9 +372,13 @@ class EtsyClient:
                     detail=detail,
                 )
             if status == 403:
+                scope_help = (
+                    "Reauthorize the token service with the required scopes and import the resulting tokens there."
+                    if isinstance(self.auth, TokenServiceAuth)
+                    else "Verify your granted scopes via `etsy-mcp auth login` with --scope flag."
+                )
                 return EtsyAuthError(
-                    f"Forbidden: {message} — this often means insufficient OAuth scope. "
-                    f"Verify your granted scopes via `etsy-mcp auth login` with --scope flag.",
+                    f"Forbidden: {message} — this often means insufficient OAuth scope. {scope_help}",
                     status=status,
                     path=path,
                     request_id=request_id,

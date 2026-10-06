@@ -29,7 +29,10 @@ apps/etsy/
 ## Run
 
 ```bash
-# Authenticate (one-time)
+# Shared n8n/MCP auth: set ETSY_BROKER_URL + ETSY_BROKER_KEY first
+uv run --package etsy-mcp etsy-mcp auth info
+
+# Or standalone authentication (without broker variables)
 etsy-mcp auth login
 
 # Run the server (stdio mode)
@@ -44,6 +47,10 @@ uv run --package etsy-mcp etsy-mcp
 | Variable | Required | Description |
 |---|---|---|
 | `ETSY_KEYSTRING` | Yes | Etsy app keystring (client ID) from https://www.etsy.com/developers |
+| `ETSY_SHARED_SECRET` | In broker mode | Shared secret for Etsy's application header |
+| `ETSY_BROKER_URL` | With broker key | Service base URL, e.g. `http://etsy-token:8080` |
+| `ETSY_BROKER_KEY` | With broker URL | Token service `client_keys.mcp` value |
+| `ETSY_BROKER_TIMEOUT_SECONDS` | No | Broker request timeout; default 60 seconds |
 | `ETSY_REFRESH_TOKEN` | No | Headless mode — bypass `auth login` by providing a pre-obtained refresh token |
 | `ETSY_TOKEN_STORE` | No | Override the tokens.json path. Default: `~/.config/etsy-mcp/tokens.json` |
 | `ETSY_TOOL_PERMISSION_MODE` | No | `confirm` (default) or `bypass` |
@@ -52,6 +59,11 @@ uv run --package etsy-mcp etsy-mcp
 | `XDG_CONFIG_HOME` | No | Standard XDG config root. Default: `~/.config` |
 
 ## Tests
+
+Broker mode ignores local tokens and `ETSY_REFRESH_TOKEN`. `auth info` reads service
+metadata; login/logout are managed on the service. See
+[token-service setup](../../docs/TOKEN_SERVICE.md). Run this checkout for the new
+integration; upstream `uvx etsy-mcp@latest` is a separate published package.
 
 ```bash
 cd apps/etsy

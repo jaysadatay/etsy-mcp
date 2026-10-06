@@ -35,6 +35,8 @@ SENSITIVE_FIELDS: frozenset[str] = frozenset(
         "shared_secret",
         "keystring",
         "client_secret",
+        "broker_key",
+        "ETSY_BROKER_KEY",
         "Authorization",
         "x-api-key",
         # Buyer PII from receipts and transactions

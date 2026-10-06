@@ -19,10 +19,11 @@ logger = logging.getLogger(__name__)
 async def run_server() -> None:
     """Start the MCP server and run the stdio transport loop."""
     from etsy_mcp.bootstrap import load_config
-    from etsy_mcp.runtime import get_server
+    from etsy_mcp.runtime import get_auth, get_client, get_server
 
     # Load config first to fail-fast on missing credentials
     cfg = load_config()
+    get_auth()  # Validate broker configuration before tool registration can catch errors.
     logger.info("Starting etsy-mcp server (log_level=%s)", getattr(cfg.server, "log_level", "INFO"))
 
     server = get_server()
@@ -35,7 +36,10 @@ async def run_server() -> None:
 
     # Run stdio transport
     logger.info("etsy-mcp server ready. Listening on stdio.")
-    await server.run_stdio_async()
+    try:
+        await server.run_stdio_async()
+    finally:
+        await get_client().close()
 
 
 def _install_permissioned_tool(server) -> None:

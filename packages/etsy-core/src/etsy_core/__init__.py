@@ -34,9 +34,11 @@ from etsy_core.exceptions import (
     EtsyValidationError,
 )
 from etsy_core.redaction import SENSITIVE_FIELDS, redact_sensitive
+from etsy_core.token_service import TokenServiceAuth
 
 __all__ = [
     "EtsyAuth",
+    "TokenServiceAuth",
     "EtsyClient",
     "EtsyError",
     "EtsyAuthError",

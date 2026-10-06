@@ -23,6 +23,8 @@ from typing import Any
 
 from etsy_core.auth import EtsyAuth, default_config_dir, default_token_path
 from etsy_core.client import EtsyClient
+from etsy_core.exceptions import EtsyAuthError
+from etsy_core.token_service import TokenServiceAuth
 from mcp.server.fastmcp import FastMCP
 
 from etsy_mcp.bootstrap import load_config, logger
@@ -39,11 +41,25 @@ def get_config() -> Any:
 
 
 @lru_cache
-def get_auth() -> EtsyAuth:
-    """Build the EtsyAuth instance from config."""
+def get_auth() -> EtsyAuth | TokenServiceAuth:
+    """Build exactly one auth provider; configured broker mode never falls back."""
     cfg = get_config().etsy
     keystring = getattr(cfg, "keystring", "") or os.environ.get("ETSY_KEYSTRING", "")
     shared_secret = getattr(cfg, "shared_secret", "") or os.environ.get("ETSY_SHARED_SECRET", "")
+    broker_url = getattr(cfg, "broker_url", "") or os.environ.get("ETSY_BROKER_URL", "")
+    broker_key = getattr(cfg, "broker_key", "") or os.environ.get("ETSY_BROKER_KEY", "")
+    if broker_url or broker_key:
+        try:
+            timeout = float(getattr(cfg, "broker_timeout_seconds", 60))
+        except (TypeError, ValueError):
+            raise EtsyAuthError("ETSY_BROKER_TIMEOUT_SECONDS must be a number.") from None
+        return TokenServiceAuth(
+            broker_url=broker_url,
+            broker_key=broker_key,
+            keystring=keystring,
+            shared_secret=shared_secret,
+            timeout=timeout,
+        )
 
     if not keystring:
         logger.warning(

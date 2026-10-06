@@ -4,6 +4,9 @@
 etsy:
   keystring: ${oc.env:ETSY_KEYSTRING,}
   shared_secret: ${oc.env:ETSY_SHARED_SECRET,}
+  broker_url: ${oc.env:ETSY_BROKER_URL,}
+  broker_key: ${oc.env:ETSY_BROKER_KEY,}
+  broker_timeout_seconds: ${oc.env:ETSY_BROKER_TIMEOUT_SECONDS,60}
   api_base: ${oc.env:ETSY_API_BASE,https://api.etsy.com/v3/application}
   timeout_seconds: ${oc.env:ETSY_TIMEOUT_SECONDS,15}
   rate_limit_per_second: ${oc.env:ETSY_RATE_LIMIT_PER_SECOND,10}

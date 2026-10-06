@@ -1,5 +1,10 @@
 # OAuth 2.0 + PKCE
 
+**Shared n8n/MCP authorization:** configure `ETSY_BROKER_URL` and `ETSY_BROKER_KEY`
+as described in [TOKEN_SERVICE.md](TOKEN_SERVICE.md). In that mode, the service is
+the sole refresh owner; MCP ignores local tokens and does not run the flow below.
+This document describes standalone OAuth mode.
+
 etsy-mcp uses the **Authorization Code Grant with PKCE** flow (RFC 7636) to authenticate against the Etsy Open API v3. This is the only flow Etsy accepts for public clients — there is no client secret in the authorization URL, so even if an attacker intercepts the authorization code from the redirect, they can't exchange it without the verifier.
 
 ## Endpoints

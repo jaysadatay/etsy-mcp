@@ -1,0 +1,1303 @@
+diff --git a/.env.example b/.env.example
+index ff389de..8a64b2e 100644
+--- a/.env.example
++++ b/.env.example
+@@ -13,13 +13,27 @@ ETSY_KEYSTRING=your_etsy_app_keystring_here
+ ETSY_SHARED_SECRET=your_etsy_app_shared_secret_here
+ 
+ # -----------------------------------------------------------------------------
+-# OPTIONAL: Token storage location
++# RECOMMENDED for shared n8n/MCP auth: private Etsy token service
++# -----------------------------------------------------------------------------
++# Set BOTH values to enable broker mode. The MCP then ignores local token files
++# and ETSY_REFRESH_TOKEN and never refreshes directly against Etsy.
++# Use the token service's client_keys.mcp value, NOT an Etsy token.
++# Containers must share the etsy-auth Docker network.
++# ETSY_BROKER_URL=http://etsy-token:8080
++# ETSY_BROKER_KEY=your_token_service_mcp_client_key
++# Default 60 seconds allows time for the service's refresh lock + Etsy request.
++# ETSY_BROKER_TIMEOUT_SECONDS=60
++# For MCP running on the host, enable the service's compose.host.yaml override
++# and use http://127.0.0.1:8787 instead.
++
++# -----------------------------------------------------------------------------
++# OPTIONAL: Token storage location (standalone mode only)
+ # -----------------------------------------------------------------------------
+ # Default: ~/.config/etsy-mcp/tokens.json
+ # ETSY_TOKEN_STORE=/custom/path/tokens.json
+ 
+ # -----------------------------------------------------------------------------
+-# OPTIONAL: Refresh token fallback (for headless / CI environments)
++# OPTIONAL: Refresh token fallback (standalone mode only)
+ # -----------------------------------------------------------------------------
+ # If set, skips the interactive `etsy-mcp auth login` bootstrap.
+ # Obtain this by running `etsy-mcp auth login` once on an interactive machine.
+diff --git a/PRIVACY.md b/PRIVACY.md
+index 8643133..1f95c24 100644
+--- a/PRIVACY.md
++++ b/PRIVACY.md
+@@ -1,6 +1,6 @@
+ # Privacy Policy
+ 
+-**Last updated:** 2026-04-15
++**Last updated:** 2026-10-06
+ 
+ ## Summary
+ 
+@@ -17,7 +17,7 @@ etsy-mcp runs locally on your machine. Your agent (Claude Code, Claude Desktop,
+ ## What we don't collect
+ 
+ - **No telemetry.** Zero usage data, error reports, or analytics.
+-- **No phone-home.** etsy-mcp connects only to `api.etsy.com` and `www.etsy.com` (auth). Nothing else.
++- **No phone-home.** Etsy requests go to `api.etsy.com` and `www.etsy.com` (standalone auth). When configured, MCP also contacts your private token service for access tokens and status; no Etsy shop/buyer data is sent to that service.
+ - **No persistent storage of buyer data.** Buyer information is fetched on-demand and held in memory only for the duration of the tool call.
+ - **No tracking.** No cookies, no fingerprinting.
+ 
+@@ -74,7 +74,7 @@ The `transactions_*` and `address_*` scopes are the only ones that expose buyer
+ 
+ ## Token storage
+ 
+-OAuth tokens live at `~/.config/etsy-mcp/tokens.json` with file mode `0600` and parent directory mode `0700`. They are never transmitted anywhere except back to Etsy on token refresh. See [SECURITY.md](SECURITY.md) for the full token threat model.
++In standalone mode, OAuth tokens live at `~/.config/etsy-mcp/tokens.json` with file mode `0600` and parent directory mode `0700`. In token-service mode, refresh tokens remain on your private service and access tokens are retrieved into MCP memory. MCP authenticates to that service using `ETSY_BROKER_KEY`; it does not send the Etsy application secret to the broker. See [SECURITY.md](SECURITY.md) and [TOKEN_SERVICE.md](docs/TOKEN_SERVICE.md).
+ 
+ ## Questions
+ 
+diff --git a/README.md b/README.md
+index db31ac4..8084693 100644
+--- a/README.md
++++ b/README.md
+@@ -47,6 +47,24 @@ uv add etsy-mcp
+ 
+ ### Authenticate
+ 
++For shared n8n/MCP authentication, configure the private Etsy token service:
++
++```dotenv
++ETSY_KEYSTRING=your_etsy_app_keystring
++ETSY_SHARED_SECRET=your_etsy_app_shared_secret
++ETSY_BROKER_URL=http://etsy-token:8080
++ETSY_BROKER_KEY=the_token_services_client_keys_mcp_value
++```
++
++Pass these variables to the MCP process. From this checkout, run
++`uv run --package etsy-mcp etsy-mcp auth info` to inspect the service. MCP ignores
++local tokens in this mode; only the service refreshes them. See
++[docs/TOKEN_SERVICE.md](docs/TOKEN_SERVICE.md) for migration and Docker/host setup.
++Run this checkout containing the change; the upstream PyPI package does not
++automatically include changes from this fork.
++
++For standalone authentication without broker variables:
++
+ ```bash
+ etsy-mcp auth login
+ ```
+@@ -68,17 +86,34 @@ Or in `claude_desktop_config.json`:
+       "command": "uvx",
+       "args": ["etsy-mcp@latest"],
+       "env": {
+-        "ETSY_KEYSTRING": "your-app-keystring"
++        "ETSY_KEYSTRING": "your-app-keystring",
++        "ETSY_SHARED_SECRET": "your-app-shared-secret"
+       }
+     }
+   }
+ }
+ ```
+ 
++## Configuration
++
++| Variable | Required | Purpose |
++|---|---|---|
++| `ETSY_KEYSTRING` | Yes | Etsy application keystring |
++| `ETSY_SHARED_SECRET` | In broker mode | Etsy application shared secret |
++| `ETSY_BROKER_URL` | With broker key | Service base URL, e.g. `http://etsy-token:8080` |
++| `ETSY_BROKER_KEY` | With broker URL | Token service `client_keys.mcp`, not an Etsy token |
++| `ETSY_BROKER_TIMEOUT_SECONDS` | No | Broker timeout; default 60 seconds |
++| `ETSY_TOKEN_STORE` | Standalone only | Local token file override |
++| `ETSY_REFRESH_TOKEN` | Standalone only | Bootstrap from an existing refresh token |
++
++Either broker variable selects broker mode; incomplete configuration fails instead
++of using local OAuth. See `.env.example` for other server settings.
++
+ ## Documentation
+ 
+ - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — package layering and responsibilities
+ - [docs/OAUTH.md](docs/OAUTH.md) — full PKCE flow and token rotation
++- [docs/TOKEN_SERVICE.md](docs/TOKEN_SERVICE.md) — shared n8n/MCP token-service authentication
+ - [docs/RATE_LIMITS.md](docs/RATE_LIMITS.md) — token bucket, daily counter, backoff
+ - [docs/ERROR_HANDLING.md](docs/ERROR_HANDLING.md) — exception hierarchy and envelope shapes
+ - [docs/TESTING.md](docs/TESTING.md) — unit and integration test strategy
+@@ -88,7 +123,7 @@ Or in `claude_desktop_config.json`:
+ 
+ ## Security notice
+ 
+-Tokens are stored locally at `~/.config/etsy-mcp/tokens.json` with mode `0600`. Refresh tokens rotate on every refresh — Etsy invalidates the old one immediately. The F3 redaction layer scrubs OAuth tokens, buyer PII (`email`, `first_name`, `last_name`, `name`, `etsy_user_id`), and shop credentials from every log line, error envelope, and tool response. Report vulnerabilities per [SECURITY.md](SECURITY.md) — never via public issues.
++In token-service mode, refresh tokens stay on the private service; MCP obtains access tokens in memory and never falls back to local OAuth. In standalone mode, tokens are stored at `~/.config/etsy-mcp/tokens.json` with mode `0600`, and the latest refresh response is persisted. The F3 redaction layer scrubs OAuth tokens, broker keys, buyer PII and shop credentials. Report vulnerabilities per [SECURITY.md](SECURITY.md) — never via public issues.
+ 
+ ## Contributing
+ 
+diff --git a/SECURITY.md b/SECURITY.md
+index 27e3449..643599a 100644
+--- a/SECURITY.md
++++ b/SECURITY.md
+@@ -25,7 +25,16 @@ Reporters are credited in the advisory unless they request anonymity.
+ 
+ ## Threat Model Summary
+ 
+-etsy-mcp brokers OAuth tokens and buyer PII from the Etsy API. The principal threats:
++With `ETSY_BROKER_URL` / `ETSY_BROKER_KEY` configured, refresh tokens and their
++persistence belong solely to the private token service. MCP requests access
++tokens and never falls back to local OAuth. Broker keys join the F3 sensitive
++field list; redirects are disabled for broker and Etsy application requests.
++Keep plain HTTP confined to a trusted same-host network. Broker login/logout are
++administered on the service; `auth info` exposes only allowlisted metadata.
++See [TOKEN_SERVICE.md](docs/TOKEN_SERVICE.md) for migration/recovery.
++
++etsy-mcp brokers OAuth tokens and buyer PII from the Etsy API. The principal threats
++below describe the standalone OAuth flow unless stated otherwise:
+ 
+ | Threat | Mitigation |
+ |---|---|
+diff --git a/apps/etsy/README.md b/apps/etsy/README.md
+index 17c97fe..9aab2f7 100644
+--- a/apps/etsy/README.md
++++ b/apps/etsy/README.md
+@@ -29,7 +29,10 @@ apps/etsy/
+ ## Run
+ 
+ ```bash
+-# Authenticate (one-time)
++# Shared n8n/MCP auth: set ETSY_BROKER_URL + ETSY_BROKER_KEY first
++uv run --package etsy-mcp etsy-mcp auth info
++
++# Or standalone authentication (without broker variables)
+ etsy-mcp auth login
+ 
+ # Run the server (stdio mode)
+@@ -44,6 +47,10 @@ uv run --package etsy-mcp etsy-mcp
+ | Variable | Required | Description |
+ |---|---|---|
+ | `ETSY_KEYSTRING` | Yes | Etsy app keystring (client ID) from https://www.etsy.com/developers |
++| `ETSY_SHARED_SECRET` | In broker mode | Shared secret for Etsy's application header |
++| `ETSY_BROKER_URL` | With broker key | Service base URL, e.g. `http://etsy-token:8080` |
++| `ETSY_BROKER_KEY` | With broker URL | Token service `client_keys.mcp` value |
++| `ETSY_BROKER_TIMEOUT_SECONDS` | No | Broker request timeout; default 60 seconds |
+ | `ETSY_REFRESH_TOKEN` | No | Headless mode — bypass `auth login` by providing a pre-obtained refresh token |
+ | `ETSY_TOKEN_STORE` | No | Override the tokens.json path. Default: `~/.config/etsy-mcp/tokens.json` |
+ | `ETSY_TOOL_PERMISSION_MODE` | No | `confirm` (default) or `bypass` |
+@@ -53,6 +60,11 @@ uv run --package etsy-mcp etsy-mcp
+ 
+ ## Tests
+ 
++Broker mode ignores local tokens and `ETSY_REFRESH_TOKEN`. `auth info` reads service
++metadata; login/logout are managed on the service. See
++[token-service setup](../../docs/TOKEN_SERVICE.md). Run this checkout for the new
++integration; upstream `uvx etsy-mcp@latest` is a separate published package.
++
+ ```bash
+ cd apps/etsy
+ make test          # unit tests
+diff --git a/apps/etsy/src/etsy_mcp/bootstrap.py b/apps/etsy/src/etsy_mcp/bootstrap.py
+index 689a805..25d5b5e 100644
+--- a/apps/etsy/src/etsy_mcp/bootstrap.py
++++ b/apps/etsy/src/etsy_mcp/bootstrap.py
+@@ -56,6 +56,9 @@ def _fallback_config_from_env() -> Any:
+         etsy=SimpleNamespace(
+             keystring=os.environ.get("ETSY_KEYSTRING", ""),
+             shared_secret=os.environ.get("ETSY_SHARED_SECRET", ""),
++            broker_url=os.environ.get("ETSY_BROKER_URL", ""),
++            broker_key=os.environ.get("ETSY_BROKER_KEY", ""),
++            broker_timeout_seconds=os.environ.get("ETSY_BROKER_TIMEOUT_SECONDS", "60"),
+             api_base=os.environ.get("ETSY_API_BASE", "https://api.etsy.com/v3/application"),
+             timeout_seconds=float(os.environ.get("ETSY_TIMEOUT_SECONDS", "15")),
+             rate_limit_per_second=float(os.environ.get("ETSY_RATE_LIMIT_PER_SECOND", "10")),
+diff --git a/apps/etsy/src/etsy_mcp/cli/auth.py b/apps/etsy/src/etsy_mcp/cli/auth.py
+index b58c60a..8d8beda 100644
+--- a/apps/etsy/src/etsy_mcp/cli/auth.py
++++ b/apps/etsy/src/etsy_mcp/cli/auth.py
+@@ -28,6 +28,7 @@ from typing import Any
+ 
+ from etsy_core.auth import DEFAULT_SCOPES, EtsyAuth, default_config_dir, default_token_path
+ from etsy_core.exceptions import EtsyAuthError
++from etsy_core.token_service import TokenServiceAuth
+ 
+ logger = logging.getLogger(__name__)
+ 
+@@ -110,9 +111,7 @@ def _run_callback_server_until_received(
+         return _CallbackHandler(*args, state_holder=state, **kwargs)
+ 
+     try:
+-        server = http.server.HTTPServer(
+-            (CALLBACK_HOST, CALLBACK_PORT), handler_factory
+-        )
++        server = http.server.HTTPServer((CALLBACK_HOST, CALLBACK_PORT), handler_factory)
+     except OSError as exc:
+         raise EtsyAuthError(
+             f"Cannot bind OAuth callback server on {CALLBACK_HOST}:{CALLBACK_PORT}: "
+@@ -147,10 +146,7 @@ def _require_credentials() -> tuple[str, str]:
+             "and export ETSY_KEYSTRING=<your_keystring>."
+         )
+     if not shared_secret:
+-        raise EtsyAuthError(
+-            "ETSY_SHARED_SECRET env var is not set. "
+-            "Export ETSY_SHARED_SECRET=<your_shared_secret>."
+-        )
++        raise EtsyAuthError("ETSY_SHARED_SECRET env var is not set. Export ETSY_SHARED_SECRET=<your_shared_secret>.")
+     return keystring, shared_secret
+ 
+ 
+@@ -239,6 +235,29 @@ def auth_cli(args: list[str]) -> None:
+ 
+     cmd = args[0]
+ 
++    # Use the same configuration/factory as the server. Broker mode must never
++    # create, refresh or delete a separate local copy of the shared Etsy grant.
++    from etsy_mcp.runtime import get_auth, get_config
++
++    cfg = get_config().etsy
++    if getattr(cfg, "broker_url", "") or getattr(cfg, "broker_key", ""):
++        try:
++            auth = get_auth()
++            if not isinstance(auth, TokenServiceAuth):
++                raise EtsyAuthError("Token-service configuration could not be loaded.")
++            if cmd == "info":
++                asyncio.run(_broker_info(auth))
++                return
++            if cmd in {"login", "logout"}:
++                raise EtsyAuthError(
++                    "Authentication is managed by the Etsy token service. "
++                    "Import/replace tokens using its local seed command. To disconnect only this MCP server, "
++                    "remove or rotate its broker client key; shared Etsy tokens must not be deleted here."
++                )
++        except EtsyAuthError as exc:
++            print(f"Error: {exc.message}", file=sys.stderr)
++            sys.exit(1)
++
+     if cmd == "login":
+         scopes: tuple[str, ...] = DEFAULT_SCOPES
+         # Parse --scope flag (comma or space separated)
+@@ -263,3 +282,18 @@ def auth_cli(args: list[str]) -> None:
+     print(f"Unknown auth command: {cmd}", file=sys.stderr)
+     print("Usage: etsy-mcp auth <login|info|logout>", file=sys.stderr)
+     sys.exit(1)
++
++
++async def _broker_info(auth: TokenServiceAuth) -> None:
++    """Inspect metadata without returning tokens or triggering a refresh."""
++    from etsy_core.exceptions import EtsyRateLimitError
++
++    try:
++        data = await auth.get_status()
++        print("Authentication: Etsy token service")
++        for key, value in data.items():
++            print(f"{key}: {value}")
++    except EtsyRateLimitError as exc:
++        raise EtsyAuthError(exc.message) from None
++    finally:
++        await auth.close()
+diff --git a/apps/etsy/src/etsy_mcp/config/config.yaml b/apps/etsy/src/etsy_mcp/config/config.yaml
+index 4b853d0..7f99acf 100644
+--- a/apps/etsy/src/etsy_mcp/config/config.yaml
++++ b/apps/etsy/src/etsy_mcp/config/config.yaml
+@@ -4,6 +4,9 @@
+ etsy:
+   keystring: ${oc.env:ETSY_KEYSTRING,}
+   shared_secret: ${oc.env:ETSY_SHARED_SECRET,}
++  broker_url: ${oc.env:ETSY_BROKER_URL,}
++  broker_key: ${oc.env:ETSY_BROKER_KEY,}
++  broker_timeout_seconds: ${oc.env:ETSY_BROKER_TIMEOUT_SECONDS,60}
+   api_base: ${oc.env:ETSY_API_BASE,https://api.etsy.com/v3/application}
+   timeout_seconds: ${oc.env:ETSY_TIMEOUT_SECONDS,15}
+   rate_limit_per_second: ${oc.env:ETSY_RATE_LIMIT_PER_SECOND,10}
+diff --git a/apps/etsy/src/etsy_mcp/main.py b/apps/etsy/src/etsy_mcp/main.py
+index 3b66e34..979a358 100644
+--- a/apps/etsy/src/etsy_mcp/main.py
++++ b/apps/etsy/src/etsy_mcp/main.py
+@@ -19,10 +19,11 @@ logger = logging.getLogger(__name__)
+ async def run_server() -> None:
+     """Start the MCP server and run the stdio transport loop."""
+     from etsy_mcp.bootstrap import load_config
+-    from etsy_mcp.runtime import get_server
++    from etsy_mcp.runtime import get_auth, get_client, get_server
+ 
+     # Load config first to fail-fast on missing credentials
+     cfg = load_config()
++    get_auth()  # Validate broker configuration before tool registration can catch errors.
+     logger.info("Starting etsy-mcp server (log_level=%s)", getattr(cfg.server, "log_level", "INFO"))
+ 
+     server = get_server()
+@@ -35,7 +36,10 @@ async def run_server() -> None:
+ 
+     # Run stdio transport
+     logger.info("etsy-mcp server ready. Listening on stdio.")
+-    await server.run_stdio_async()
++    try:
++        await server.run_stdio_async()
++    finally:
++        await get_client().close()
+ 
+ 
+ def _install_permissioned_tool(server) -> None:
+diff --git a/apps/etsy/src/etsy_mcp/runtime.py b/apps/etsy/src/etsy_mcp/runtime.py
+index 6a88b2a..1f0bd64 100644
+--- a/apps/etsy/src/etsy_mcp/runtime.py
++++ b/apps/etsy/src/etsy_mcp/runtime.py
+@@ -23,6 +23,8 @@ from typing import Any
+ 
+ from etsy_core.auth import EtsyAuth, default_config_dir, default_token_path
+ from etsy_core.client import EtsyClient
++from etsy_core.exceptions import EtsyAuthError
++from etsy_core.token_service import TokenServiceAuth
+ from mcp.server.fastmcp import FastMCP
+ 
+ from etsy_mcp.bootstrap import load_config, logger
+@@ -39,11 +41,25 @@ def get_config() -> Any:
+ 
+ 
+ @lru_cache
+-def get_auth() -> EtsyAuth:
+-    """Build the EtsyAuth instance from config."""
++def get_auth() -> EtsyAuth | TokenServiceAuth:
++    """Build exactly one auth provider; configured broker mode never falls back."""
+     cfg = get_config().etsy
+     keystring = getattr(cfg, "keystring", "") or os.environ.get("ETSY_KEYSTRING", "")
+     shared_secret = getattr(cfg, "shared_secret", "") or os.environ.get("ETSY_SHARED_SECRET", "")
++    broker_url = getattr(cfg, "broker_url", "") or os.environ.get("ETSY_BROKER_URL", "")
++    broker_key = getattr(cfg, "broker_key", "") or os.environ.get("ETSY_BROKER_KEY", "")
++    if broker_url or broker_key:
++        try:
++            timeout = float(getattr(cfg, "broker_timeout_seconds", 60))
++        except (TypeError, ValueError):
++            raise EtsyAuthError("ETSY_BROKER_TIMEOUT_SECONDS must be a number.") from None
++        return TokenServiceAuth(
++            broker_url=broker_url,
++            broker_key=broker_key,
++            keystring=keystring,
++            shared_secret=shared_secret,
++            timeout=timeout,
++        )
+ 
+     if not keystring:
+         logger.warning(
+diff --git a/apps/etsy/tests/unit/test_token_service_runtime.py b/apps/etsy/tests/unit/test_token_service_runtime.py
+new file mode 100644
+index 0000000..1d8285c
+--- /dev/null
++++ b/apps/etsy/tests/unit/test_token_service_runtime.py
+@@ -0,0 +1,82 @@
++"""Broker configuration selection and CLI ownership boundaries."""
++
++from unittest.mock import AsyncMock
++
++import pytest
++from etsy_core.auth import EtsyAuth
++from etsy_core.exceptions import EtsyAuthError
++from etsy_core.token_service import TokenServiceAuth
++from etsy_mcp import runtime
++from etsy_mcp.cli.auth import auth_cli
++
++
++@pytest.fixture(autouse=True)
++def isolated_config(monkeypatch, tmp_path):
++    for name in ("ETSY_BROKER_URL", "ETSY_BROKER_KEY", "ETSY_BROKER_TIMEOUT_SECONDS", "ETSY_REFRESH_TOKEN"):
++        monkeypatch.delenv(name, raising=False)
++    monkeypatch.setenv("ETSY_KEYSTRING", "test-app")
++    monkeypatch.setenv("ETSY_SHARED_SECRET", "test-secret")
++    monkeypatch.setenv("ETSY_TOKEN_STORE", str(tmp_path / "tokens.json"))
++    runtime.get_config.cache_clear()
++    runtime.get_auth.cache_clear()
++    yield
++    runtime.get_config.cache_clear()
++    runtime.get_auth.cache_clear()
++
++
++def enable_broker(monkeypatch):
++    monkeypatch.setenv("ETSY_BROKER_URL", "http://etsy-token:8080")
++    monkeypatch.setenv("ETSY_BROKER_KEY", "broker-test-key")
++
++
++def test_broker_selected_and_local_token_file_untouched(monkeypatch, tmp_path):
++    enable_broker(monkeypatch)
++    monkeypatch.setenv("ETSY_REFRESH_TOKEN", "DO-NOT-USE")
++    auth = runtime.get_auth()
++    assert isinstance(auth, TokenServiceAuth)
++    assert runtime.get_auth() is auth
++    assert not (tmp_path / "tokens.json").exists()
++
++
++def test_standalone_still_available():
++    assert isinstance(runtime.get_auth(), EtsyAuth)
++
++
++@pytest.mark.parametrize("name,value", [("ETSY_BROKER_URL", "http://etsy-token:8080"), ("ETSY_BROKER_KEY", "secret")])
++def test_partial_configuration_never_falls_back(monkeypatch, name, value):
++    monkeypatch.setenv(name, value)
++    with pytest.raises(EtsyAuthError):
++        runtime.get_auth()
++
++
++@pytest.mark.parametrize("value", ["invalid", "nan", "0"])
++def test_invalid_timeout_fails_with_safe_message(monkeypatch, value):
++    enable_broker(monkeypatch)
++    monkeypatch.setenv("ETSY_BROKER_TIMEOUT_SECONDS", value)
++    with pytest.raises(EtsyAuthError, match="ETSY_BROKER_TIMEOUT_SECONDS"):
++        runtime.get_auth()
++
++
++@pytest.mark.parametrize("command", ["login", "logout"])
++def test_broker_cli_cannot_mutate_local_tokens(monkeypatch, tmp_path, capsys, command):
++    enable_broker(monkeypatch)
++    file = tmp_path / "tokens.json"
++    file.write_text("local-secret")
++    with pytest.raises(SystemExit) as caught:
++        auth_cli([command])
++    assert caught.value.code == 1
++    assert file.read_text() == "local-secret"
++    assert "token service" in capsys.readouterr().err
++
++
++def test_broker_info_only_fetches_status(monkeypatch, capsys):
++    enable_broker(monkeypatch)
++    auth = runtime.get_auth()
++    monkeypatch.setattr(auth, "get_status", AsyncMock(return_value={"state": "active", "version": 2}))
++    monkeypatch.setattr(auth, "get_token", AsyncMock(side_effect=AssertionError("must not request tokens")))
++    monkeypatch.setattr(auth, "close", AsyncMock())
++    auth_cli(["info"])
++    assert "version: 2" in capsys.readouterr().out
++    auth.get_status.assert_awaited_once()
++    auth.get_token.assert_not_awaited()
++    auth.close.assert_awaited_once()
+diff --git a/docs/OAUTH.md b/docs/OAUTH.md
+index 2efa4fa..1a154d0 100644
+--- a/docs/OAUTH.md
++++ b/docs/OAUTH.md
+@@ -1,5 +1,10 @@
+ # OAuth 2.0 + PKCE
+ 
++**Shared n8n/MCP authorization:** configure `ETSY_BROKER_URL` and `ETSY_BROKER_KEY`
++as described in [TOKEN_SERVICE.md](TOKEN_SERVICE.md). In that mode, the service is
++the sole refresh owner; MCP ignores local tokens and does not run the flow below.
++This document describes standalone OAuth mode.
++
+ etsy-mcp uses the **Authorization Code Grant with PKCE** flow (RFC 7636) to authenticate against the Etsy Open API v3. This is the only flow Etsy accepts for public clients — there is no client secret in the authorization URL, so even if an attacker intercepts the authorization code from the redirect, they can't exchange it without the verifier.
+ 
+ ## Endpoints
+diff --git a/docs/TOKEN_SERVICE.md b/docs/TOKEN_SERVICE.md
+new file mode 100644
+index 0000000..8bc3886
+--- /dev/null
++++ b/docs/TOKEN_SERVICE.md
+@@ -0,0 +1,165 @@
++# Shared authentication with the Etsy token service
++
++Use this mode when n8n and MCP share one Etsy OAuth authorization. The private
++service owns the access/refresh token pair and its persistent SQLite database.
++MCP requests access tokens; it never receives, stores or refreshes the shared
++refresh token. Existing tool permissions and confirmation rules are unchanged.
++
++## Configure this checkout
++
++Run the version of this repository containing the integration. Installing the
++upstream `uvx etsy-mcp@latest` package does not install changes from your fork.
++
++```bash
++uv sync --all-packages
++```
++
++Set these variables in the MCP process environment or your MCP client's `env`
++configuration. The server does not automatically load a `.env` file: export the
++values, or supply the file through your process/container launcher.
++
++```dotenv
++ETSY_KEYSTRING=your_etsy_app_keystring
++ETSY_SHARED_SECRET=your_etsy_app_shared_secret
++ETSY_BROKER_URL=http://etsy-token:8080
++ETSY_BROKER_KEY=the_token_services_client_keys_mcp_value
++ETSY_BROKER_TIMEOUT_SECONDS=60
++```
++
++- The keystring/shared secret must match the token service's Etsy application.
++  MCP still sends Etsy's `x-api-key: keystring:shared_secret` header.
++- The broker key is **`client_keys.mcp`** from the service's private
++  `secrets/config.json`. It is not an Etsy token. Do not copy the service's full
++  config or encryption key into the MCP repository/configuration.
++- Either broker variable selects broker mode. Both must be valid. Partial
++  configuration fails instead of silently falling back to local OAuth.
++- `ETSY_TOKEN_STORE` and `ETSY_REFRESH_TOKEN` are ignored in broker mode. Remove
++  stale values from deployment configuration to avoid confusion.
++
++```bash
++uv run --package etsy-mcp etsy-mcp auth info
++uv run --package etsy-mcp etsy-mcp
++```
++
++`auth info` calls `GET /etsy/status` and displays only state, version, expiry and
++retry delay. It does not fetch tokens or force a refresh. The second command
++starts the existing stdio MCP transport. This change does not add an HTTP MCP
++listener or change how the AI client connects to MCP.
++
++A host-based MCP client configuration for this checkout:
++
++```json
++{
++  "mcpServers": {
++    "etsy": {
++      "command": "uv",
++      "args": ["--directory", "/absolute/path/to/etsy-mcp", "run", "--package", "etsy-mcp", "etsy-mcp"],
++      "env": {
++        "ETSY_KEYSTRING": "your_etsy_app_keystring",
++        "ETSY_SHARED_SECRET": "your_etsy_app_shared_secret",
++        "ETSY_BROKER_URL": "http://127.0.0.1:8787",
++        "ETSY_BROKER_KEY": "the_token_services_client_keys_mcp_value"
++      }
++    }
++  }
++}
++```
++
++All credential values above are placeholders. Choose the URL for the actual
++location of the MCP process, as described below.
++
++## Same-host networking
++
++**MCP in Docker:** attach it to the service's `etsy-auth` network. Merge these
++additions into your existing Compose configuration, keeping its existing image,
++command, transport and network memberships:
++
++```yaml
++services:
++  etsy-mcp:  # replace with your existing service name
++    environment:
++      ETSY_KEYSTRING: ${ETSY_KEYSTRING:?Set the Etsy app keystring}
++      ETSY_SHARED_SECRET: ${ETSY_SHARED_SECRET:?Set the Etsy app shared secret}
++      ETSY_BROKER_URL: http://etsy-token:8080
++      ETSY_BROKER_KEY: ${ETSY_BROKER_KEY:?Set the broker client_keys.mcp value}
++      ETSY_BROKER_TIMEOUT_SECONDS: "60"
++    networks:
++      - default
++      - etsy-auth
++networks:
++  default: {}
++  etsy-auth:
++    external: true
++    name: etsy-auth
++```
++
++**MCP directly on the host:** enable the token service's supplied loopback-only
++override in the token service project:
++
++```bash
++docker compose -f compose.yaml -f compose.host.yaml up -d
++```
++
++Use `ETSY_BROKER_URL=http://127.0.0.1:8787`. Inside another container, `127.0.0.1`
++refers to that container; use the shared Docker network instead. For another
++machine, use private routing and HTTPS. Do not publicly expose the token service.
++Broker requests disable redirects and environment proxies.
++
++## Migrate from local OAuth
++
++1. Pause processes currently refreshing the shared authorization. Let in-progress
++   refreshes finish and take the latest token pair.
++2. In the token service project, import it with
++   `docker compose exec etsy-token python -m broker.manage seed` (or `seed --replace`
++   if initialized). If the service already has the current pair, leave it there;
++   do not replace it with an old MCP token file.
++3. Configure the variables above. Make both n8n and MCP use the service, and
++   disable all other refresh branches for this authorization.
++4. Run `etsy-mcp auth info` and check for `state: active`, then perform a read-only
++   shop/listing request through your MCP client.
++
++Old token files are ignored, not deleted. `auth login` and `auth logout` refuse to
++operate in broker mode and explain that administration belongs to the service.
++To disconnect only MCP, remove/rotate its broker client key. Revoking the shared
++Etsy authorization also affects n8n.
++
++For reauthorization, use your existing OAuth consent setup and import the new
++pair on the service. Broker mode does not add a second browser OAuth flow.
++
++## Request and recovery behavior
++
++Before each logical Etsy API request, MCP sends `POST /etsy/token` with `{}` and
++its broker bearer key. It uses the returned access token and keeps the token's
++version local to that request.
++
++On an explicit access-token rejection (401 `invalid_token`, a matching bearer
++challenge, or an expired/invalid token message), MCP sends:
++
++```json
++{"rejected_version": 17}
++```
++
++The version belongs to the token actually rejected, not a concurrent request's
++token. The service decides whether to refresh or reuse a newer token from n8n.
++
++- GET and explicitly idempotent PUT requests may retry once after recovery.
++  There is at most one broker recovery per logical request.
++- POST, PATCH, DELETE and ordinary PUT notify the broker but are **never replayed
++  automatically**. MCP returns an actionable error; verify Etsy state before
++  deciding whether to submit the write again.
++- Generic 401 errors, invalid app keys and 403 scope errors do not trigger token
++  recovery. Existing idempotent retries for Etsy 429/5xx/timeouts still apply.
++- Broker failures never fall back to a token file or Etsy's refresh endpoint.
++  Broker 429 errors retain their `Retry-After` delay in the rate-limit exception.
++- Broker errors use fixed explanations, not raw response bodies. Tokens and keys
++  are not exposed as MCP tools or tool results.
++
++For `refresh_uncertain` or `reauthorization_required`, recover the authorization
++on the token service. A refresh cannot add scopes: reauthorize with the union of
++the scopes n8n/MCP need, then import the new pair.
++
++## Standalone compatibility
++
++When both broker variables are absent, the existing local `EtsyAuth` flow remains
++available. Use that for an independently managed authorization. Do not run local
++and broker refresh against the same shared token pair.
+diff --git a/packages/etsy-core/src/etsy_core/__init__.py b/packages/etsy-core/src/etsy_core/__init__.py
+index 916dc3c..2b44c76 100644
+--- a/packages/etsy-core/src/etsy_core/__init__.py
++++ b/packages/etsy-core/src/etsy_core/__init__.py
+@@ -34,9 +34,11 @@ from etsy_core.exceptions import (
+     EtsyValidationError,
+ )
+ from etsy_core.redaction import SENSITIVE_FIELDS, redact_sensitive
++from etsy_core.token_service import TokenServiceAuth
+ 
+ __all__ = [
+     "EtsyAuth",
++    "TokenServiceAuth",
+     "EtsyClient",
+     "EtsyError",
+     "EtsyAuthError",
+diff --git a/packages/etsy-core/src/etsy_core/client.py b/packages/etsy-core/src/etsy_core/client.py
+index c70a028..dfc9a29 100644
+--- a/packages/etsy-core/src/etsy_core/client.py
++++ b/packages/etsy-core/src/etsy_core/client.py
+@@ -41,6 +41,7 @@ from etsy_core.exceptions import (
+ from etsy_core.rate_limiter import DailyBudgetExceeded, DailyCounter, _TokenBucket
+ from etsy_core.redaction import redact_sensitive
+ from etsy_core.retry import build_retry_config
++from etsy_core.token_service import TokenServiceAuth, is_access_token_rejection
+ 
+ logger = logging.getLogger(__name__)
+ 
+@@ -58,7 +59,7 @@ class EtsyClient:
+ 
+     def __init__(
+         self,
+-        auth: EtsyAuth,
++        auth: EtsyAuth | TokenServiceAuth,
+         *,
+         base_url: str = DEFAULT_BASE_URL,
+         timeout: float = DEFAULT_TIMEOUT,
+@@ -94,7 +95,7 @@ class EtsyClient:
+             self._http = httpx.AsyncClient(
+                 timeout=self.timeout,
+                 limits=httpx.Limits(max_connections=20, max_keepalive_connections=10),
+-                follow_redirects=True,
++                follow_redirects=False,
+             )
+         return self._http
+ 
+@@ -103,6 +104,8 @@ class EtsyClient:
+         if self._http is not None:
+             await self._http.aclose()
+             self._http = None
++        if isinstance(self.auth, TokenServiceAuth):
++            await self.auth.close()
+ 
+     # -------------------------------------------------------------------------
+     # Core request methods
+@@ -182,10 +185,15 @@ class EtsyClient:
+         except DailyBudgetExceeded as exc:
+             raise EtsyRateLimitError(str(exc), request_id=request_id) from exc
+ 
+-        # Get auth token (may trigger refresh)
++        # Keep broker token/version together in this request's local scope.
++        broker_token = None
+         try:
+-            access_token = await self.auth.get_access_token()
+-        except EtsyAuthError:
++            if isinstance(self.auth, TokenServiceAuth):
++                broker_token = await self.auth.get_token()
++                access_token = broker_token.access_token
++            else:
++                access_token = await self.auth.get_access_token()
++        except (EtsyAuthError, EtsyRateLimitError):
+             raise  # Re-raise as-is
+         except Exception as exc:  # pragma: no cover — unexpected auth error
+             raise EtsyAuthError(f"Unexpected auth failure: {exc.__class__.__name__}", request_id=request_id) from exc
+@@ -207,21 +215,52 @@ class EtsyClient:
+         )
+ 
+         client = await self._ensure_open()
++        recovered = False
++
++        async def send_idempotent() -> httpx.Response:
++            nonlocal broker_token, recovered
++            response = await client.request(
++                method,
++                url,
++                headers=headers,
++                params=params,
++                json=json,
++                data=data,
++                files=files,
++            )
++            if (
++                not recovered
++                and broker_token is not None
++                and isinstance(self.auth, TokenServiceAuth)
++                and is_access_token_rejection(response)
++            ):
++                recovered = True
++                await response.aclose()
++                broker_token = await self.auth.get_token(rejected_version=broker_token.version)
++                headers["Authorization"] = f"Bearer {broker_token.access_token}"
++                # The recovery retry also counts against Etsy's rate/budget limits.
++                await self._rate_limiter.acquire()
++                try:
++                    await self._daily_counter.increment()
++                except DailyBudgetExceeded as exc:
++                    raise EtsyRateLimitError(str(exc), request_id=request_id) from exc
++                response = await client.request(
++                    method,
++                    url,
++                    headers=headers,
++                    params=params,
++                    json=json,
++                    data=data,
++                    files=files,
++                )
++            return response
+ 
+         if idempotent:
+             # Retry wrapper for idempotent operations
+             try:
+-                async for attempt in self._retry_config:
++                async for attempt in self._retry_config.copy():
+                     with attempt:
+-                        response = await client.request(
+-                            method,
+-                            url,
+-                            headers=headers,
+-                            params=params,
+-                            json=json,
+-                            data=data,
+-                            files=files,
+-                        )
++                        response = await send_idempotent()
+                         response.raise_for_status()
+             except RetryError as exc:
+                 inner = exc.last_attempt.exception() if exc.last_attempt else exc
+@@ -242,6 +281,21 @@ class EtsyClient:
+                     data=data,
+                     files=files,
+                 )
++                if (
++                    broker_token is not None
++                    and isinstance(self.auth, TokenServiceAuth)
++                    and is_access_token_rejection(response)
++                ):
++                    # Notify the sole refresh owner, but NEVER replay this write.
++                    await response.aclose()
++                    await self.auth.get_token(rejected_version=broker_token.version)
++                    raise EtsyAuthError(
++                        "Etsy rejected the access token; a current token was obtained from the token service. "
++                        "The write was not retried. Verify Etsy state before submitting it again.",
++                        status=401,
++                        path=path,
++                        request_id=request_id,
++                    )
+                 response.raise_for_status()
+             except httpx.TimeoutException as exc:
+                 raise EtsyPossiblyCompletedError(
+@@ -318,9 +372,13 @@ class EtsyClient:
+                     detail=detail,
+                 )
+             if status == 403:
++                scope_help = (
++                    "Reauthorize the token service with the required scopes and import the resulting tokens there."
++                    if isinstance(self.auth, TokenServiceAuth)
++                    else "Verify your granted scopes via `etsy-mcp auth login` with --scope flag."
++                )
+                 return EtsyAuthError(
+-                    f"Forbidden: {message} — this often means insufficient OAuth scope. "
+-                    f"Verify your granted scopes via `etsy-mcp auth login` with --scope flag.",
++                    f"Forbidden: {message} — this often means insufficient OAuth scope. {scope_help}",
+                     status=status,
+                     path=path,
+                     request_id=request_id,
+diff --git a/packages/etsy-core/src/etsy_core/redaction.py b/packages/etsy-core/src/etsy_core/redaction.py
+index d21b084..8b00f44 100644
+--- a/packages/etsy-core/src/etsy_core/redaction.py
++++ b/packages/etsy-core/src/etsy_core/redaction.py
+@@ -35,6 +35,8 @@ SENSITIVE_FIELDS: frozenset[str] = frozenset(
+         "shared_secret",
+         "keystring",
+         "client_secret",
++        "broker_key",
++        "ETSY_BROKER_KEY",
+         "Authorization",
+         "x-api-key",
+         # Buyer PII from receipts and transactions
+diff --git a/packages/etsy-core/src/etsy_core/token_service.py b/packages/etsy-core/src/etsy_core/token_service.py
+new file mode 100644
+index 0000000..6f7478d
+--- /dev/null
++++ b/packages/etsy-core/src/etsy_core/token_service.py
+@@ -0,0 +1,187 @@
++"""Async access-token provider for the private Etsy token service.
++
++The service alone owns refresh tokens and persistence. There is deliberately no
++fallback to EtsyAuth, a local token file, or Etsy's OAuth endpoint on failure.
++"""
++
++from __future__ import annotations
++
++import math
++import time
++from dataclasses import dataclass, field
++from typing import Any
++
++import httpx
++
++from etsy_core.exceptions import EtsyAuthError, EtsyRateLimitError
++
++_ERROR_HELP = {
++    "unauthorized": "Check ETSY_BROKER_KEY against the service's client_keys.mcp.",
++    "not_initialized": "Import the current tokens using the token service's local seed command.",
++    "refresh_uncertain": "Recover known-current tokens on the token service; do not retry an old refresh token.",
++    "reauthorization_required": "Reauthorize Etsy and import the new tokens on the token service.",
++    "oauth_configuration_error": "Check the token service's Etsy app credentials and imported authorization.",
++    "refresh_busy": "The token service is busy; wait before requesting a token again.",
++    "refresh_rate_limited": "The token service is rate limited; respect Retry-After.",
++    "recovery_rate_limited": "Repeated token recovery was throttled; check Etsy application credentials.",
++    "unknown_token_version": "Fetch a token normally before attempting recovery again.",
++    "client_id_mismatch": "The token service's database and application configuration do not match.",
++    "storage_decryption_failed": "Restore the token service's correct encryption key.",
++}
++_STATES = {"uninitialized", "active", "refresh_pending", "reauthorization_required", "oauth_configuration_error"}
++
++
++@dataclass(frozen=True)
++class BrokerToken:
++    """Per-request snapshot: concurrent calls must never share a mutable version."""
++
++    access_token: str = field(repr=False)
++    version: int
++    expires_at: int
++
++
++class TokenServiceAuth:
++    """Same-server HTTP or private HTTPS broker client; no refresh-token access."""
++
++    def __init__(
++        self, *, broker_url: str, broker_key: str, keystring: str, shared_secret: str, timeout: float = 60.0
++    ) -> None:
++        try:
++            url = httpx.URL(broker_url)
++            valid_url = (
++                url.scheme in {"http", "https"}
++                and bool(url.host)
++                and not url.userinfo
++                and not url.query
++                and not url.fragment
++            )
++        except (httpx.InvalidURL, ValueError):
++            valid_url = False
++        if not broker_url or broker_url != broker_url.strip() or not valid_url:
++            raise EtsyAuthError("ETSY_BROKER_URL must be an HTTP(S) base URL without credentials, query or fragment.")
++        for name, value in (
++            ("ETSY_BROKER_KEY", broker_key),
++            ("ETSY_KEYSTRING", keystring),
++            ("ETSY_SHARED_SECRET", shared_secret),
++        ):
++            if not value or not value.isascii() or any(c.isspace() or ord(c) < 32 for c in value):
++                raise EtsyAuthError(f"{name} is required in token-service mode and must not contain whitespace.")
++        if not math.isfinite(timeout) or not 0 < timeout <= 300:
++            raise EtsyAuthError("ETSY_BROKER_TIMEOUT_SECONDS must be greater than zero and at most 300.")
++        self._url = broker_url.rstrip("/")
++        self._key = broker_key
++        self._api_key = f"{keystring}:{shared_secret}"
++        self._timeout = timeout
++        self._http: httpx.AsyncClient | None = None
++
++    async def _request(self, method: str, path: str, body: dict[str, Any] | None = None) -> dict[str, Any]:
++        if self._http is None:
++            self._http = httpx.AsyncClient(timeout=self._timeout, follow_redirects=False, trust_env=False)
++        try:
++            response = await self._http.request(
++                method,
++                f"{self._url}{path}",
++                json=body,
++                headers={"Authorization": f"Bearer {self._key}"},
++            )
++        except httpx.HTTPError:
++            # Suppress exception chains: transport errors can contain URLs/headers.
++            raise EtsyAuthError("Cannot reach the Etsy token service; check its health and private network.") from None
++        if response.status_code != 200:
++            try:
++                payload = response.json()
++                code = payload.get("error") if isinstance(payload, dict) else None
++                help_text = (
++                    _ERROR_HELP.get(code, "Check the token service's status and configuration.")
++                    if isinstance(code, str)
++                    else "Check the token service's status and configuration."
++                )
++            except ValueError:
++                help_text = "Check the token service's status and configuration."
++            message = f"Etsy token service returned HTTP {response.status_code}. {help_text}"
++            if response.status_code == 429:
++                try:
++                    seconds = int(response.headers.get("Retry-After", ""))
++                    seconds = seconds if seconds >= 0 else None
++                except ValueError:
++                    seconds = None
++                raise EtsyRateLimitError(message, status=429, retry_after_seconds=seconds)
++            raise EtsyAuthError(message, status=response.status_code)
++        try:
++            payload = response.json()
++        except ValueError:
++            raise EtsyAuthError("Etsy token service returned invalid JSON.") from None
++        if not isinstance(payload, dict):
++            raise EtsyAuthError("Etsy token service returned an invalid response object.")
++        return payload
++
++    async def get_token(self, rejected_version: int | None = None) -> BrokerToken:
++        body = {} if rejected_version is None else {"rejected_version": rejected_version}
++        data = await self._request("POST", "/etsy/token", body)
++        access, version, expiry = data.get("access_token"), data.get("version"), data.get("expires_at")
++        if (
++            not isinstance(access, str)
++            or not access
++            or not access.isascii()
++            or any(c.isspace() or ord(c) < 32 for c in access)
++            or type(version) is not int
++            or version < 1
++            or type(expiry) is not int
++            or expiry <= time.time()
++            or data.get("token_type") != "Bearer"
++        ):
++            raise EtsyAuthError("Etsy token service returned invalid or expired access-token metadata.")
++        return BrokerToken(access, version, expiry)
++
++    async def get_access_token(self) -> str:
++        return (await self.get_token()).access_token
++
++    def get_keystring(self) -> str:
++        """Return Etsy's application header value: keystring:shared_secret."""
++        return self._api_key
++
++    async def get_status(self) -> dict[str, Any]:
++        """Allowlist metadata for the CLI; never echo arbitrary service fields."""
++        data = await self._request("GET", "/etsy/status")
++        state = data.get("state")
++        if not isinstance(state, str) or state not in _STATES:
++            raise EtsyAuthError("Etsy token service returned invalid status metadata.")
++        result: dict[str, Any] = {"state": state}
++        for key in ("version", "expires_at", "retry_after"):
++            if key in data:
++                if type(data[key]) is not int or data[key] < 0:
++                    raise EtsyAuthError("Etsy token service returned invalid status metadata.")
++                result[key] = data[key]
++        return result
++
++    async def close(self) -> None:
++        if self._http is not None:
++            await self._http.aclose()
++            self._http = None
++
++
++def is_access_token_rejection(response: httpx.Response) -> bool:
++    """Recover only explicit bearer-token failures, never arbitrary 401/403 errors."""
++    if response.status_code != 401:
++        return False
++    challenge = response.headers.get("WWW-Authenticate", "").lower()
++    if challenge.startswith("bearer ") and "invalid_token" in challenge:
++        return True
++    try:
++        data = response.json()
++    except ValueError:
++        return False
++    if not isinstance(data, dict):
++        return False
++    for key in ("error", "error_description", "message"):
++        value = data.get(key)
++        if not isinstance(value, str):
++            continue
++        value = value.lower()
++        if value in {"invalid_token", "invalid_access_token", "token_expired", "expired_token"}:
++            return True
++        if ("access token" in value or "oauth token" in value) and any(
++            marker in value for marker in ("expired", "invalid", "revoked")
++        ):
++            return True
++    return False
+diff --git a/packages/etsy-core/tests/test_token_service.py b/packages/etsy-core/tests/test_token_service.py
+new file mode 100644
+index 0000000..114fde9
+--- /dev/null
++++ b/packages/etsy-core/tests/test_token_service.py
+@@ -0,0 +1,261 @@
++"""Contract and request-flow tests for the private token service integration."""
++
++from __future__ import annotations
++
++import asyncio
++import json
++import time
++import traceback
++
++import httpx
++import pytest
++import respx
++from etsy_core.client import DEFAULT_BASE_URL, EtsyClient
++from etsy_core.exceptions import EtsyAuthError, EtsyPossiblyCompletedError, EtsyRateLimitError
++from etsy_core.redaction import REDACTED_PLACEHOLDER, redact_sensitive
++from etsy_core.token_service import TokenServiceAuth
++
++BROKER = "http://etsy-token:8080"
++
++
++def token(version=1):
++    return {
++        "access_token": f"123.token-{version}",
++        "version": version,
++        "expires_at": int(time.time()) + 3600,
++        "token_type": "Bearer",
++    }
++
++
++@pytest.fixture
++def auth():
++    return TokenServiceAuth(
++        broker_url=BROKER, broker_key="broker-secret", keystring="app-key", shared_secret="app-secret"
++    )
++
++
++@pytest.fixture
++async def client(auth, tmp_path):
++    client = EtsyClient(auth, rate_limit_per_second=100, daily_counter_path=tmp_path / "daily.json")
++    yield client
++    await client.close()
++
++
++@pytest.mark.parametrize(
++    "field,value",
++    [
++        ("broker_url", ""),
++        ("broker_key", ""),
++        ("keystring", ""),
++        ("shared_secret", ""),
++        ("broker_url", "ftp://host"),
++        ("broker_url", "http://key@host"),
++        ("broker_url", "http://host?key=secret"),
++        ("broker_url", "http://host#secret"),
++        ("broker_key", "secret\nheader"),
++        ("timeout", float("nan")),
++        ("timeout", 0),
++    ],
++)
++def test_rejects_invalid_configuration_without_echoing_values(field, value):
++    kwargs = dict(broker_url=BROKER, broker_key="broker-secret", keystring="app-key", shared_secret="app-secret")
++    kwargs[field] = value
++    with pytest.raises(EtsyAuthError):
++        TokenServiceAuth(**kwargs)
++
++
++@pytest.mark.asyncio
++async def test_contract_no_local_tokens_or_direct_refresh(auth, tmp_path, monkeypatch, mock_httpx):
++    store = tmp_path / "tokens.json"
++    store.write_text('{"refresh_token": "DO-NOT-USE"}')
++    monkeypatch.setenv("ETSY_REFRESH_TOKEN", "DO-NOT-USE")
++    monkeypatch.setenv("ETSY_TOKEN_STORE", str(store))
++    broker = mock_httpx.post(BROKER + "/etsy/token").respond(200, json=token())
++    direct = mock_httpx.post("https://api.etsy.com/v3/public/oauth/token").respond(500)
++    result = await auth.get_token()
++    assert result.version == 1 and "123.token-1" not in repr(result)
++    request = broker.calls[0].request
++    assert json.loads(request.content) == {}
++    assert request.headers["Authorization"] == "Bearer broker-secret"
++    assert "x-api-key" not in request.headers
++    assert auth.get_keystring() == "app-key:app-secret"
++    assert direct.call_count == 0 and store.read_text() == '{"refresh_token": "DO-NOT-USE"}'
++    await auth.close()
++
++
++@pytest.mark.asyncio
++@pytest.mark.parametrize(
++    "data",
++    [
++        [],
++        {},
++        {**token(), "access_token": ""},
++        {**token(), "version": True},
++        {**token(), "expires_at": 1},
++        {**token(), "expires_at": "100000000000"},
++        {**token(), "access_token": "token\r\nheader"},
++        {**token(), "token_type": "Basic"},
++    ],
++)
++async def test_bad_token_response_fails_closed(auth, mock_httpx, data):
++    mock_httpx.post(BROKER + "/etsy/token").respond(200, json=data)
++    with pytest.raises(EtsyAuthError, match="invalid"):
++        await auth.get_token()
++    await auth.close()
++
++
++@pytest.mark.asyncio
++@pytest.mark.parametrize(
++    "code", ["refresh_uncertain", "reauthorization_required", "not_initialized", "SECRET-RAW-BODY"]
++)
++async def test_broker_failure_never_calls_etsy_or_echoes_body(client, mock_httpx, caplog, code):
++    route = mock_httpx.post(BROKER + "/etsy/token").respond(
++        503, json={"error": code, "refresh_token": "PRIVATE", "message": "PRIVATE"}
++    )
++    with pytest.raises(EtsyAuthError) as caught:
++        await client.get("/listings/1")
++    output = "".join(traceback.format_exception(caught.value)) + caplog.text
++    assert "PRIVATE" not in output and "SECRET-RAW-BODY" not in output
++    assert route.call_count == 1
++
++
++@pytest.mark.asyncio
++async def test_broker_network_errors_are_not_retried_or_leaked(client, mock_httpx):
++    route = mock_httpx.post(BROKER + "/etsy/token").mock(side_effect=httpx.ReadTimeout("PRIVATE-KEY"))
++    with pytest.raises(EtsyAuthError) as caught:
++        await client.get("/listings/1")
++    assert "PRIVATE-KEY" not in "".join(traceback.format_exception(caught.value))
++    assert route.call_count == 1
++
++
++@pytest.mark.asyncio
++async def test_broker_rate_limit_is_not_wrapped_or_retried(client, mock_httpx):
++    route = mock_httpx.post(BROKER + "/etsy/token").respond(429, headers={"Retry-After": "120"})
++    with pytest.raises(EtsyRateLimitError) as caught:
++        await client.get("/listings/1")
++    assert caught.value.retry_after_seconds == 120 and route.call_count == 1
++
++
++@pytest.mark.asyncio
++async def test_get_recovers_exact_rejected_version_once(client, mock_httpx):
++    broker = mock_httpx.post(BROKER + "/etsy/token").mock(
++        side_effect=[httpx.Response(200, json=token(5)), httpx.Response(200, json=token(6))]
++    )
++    etsy = mock_httpx.get(DEFAULT_BASE_URL + "/listings/1").mock(
++        side_effect=[httpx.Response(401, json={"error": "invalid_token"}), httpx.Response(200, json={"listing_id": 1})]
++    )
++    assert await client.get("/listings/1") == {"listing_id": 1}
++    assert json.loads(broker.calls[1].request.content) == {"rejected_version": 5}
++    assert etsy.calls[1].request.headers["Authorization"] == "Bearer 123.token-6"
++    assert etsy.calls[1].request.headers["x-api-key"] == "app-key:app-secret"
++    assert "broker-secret" not in str(etsy.calls[1].request.headers)
++    assert client.rate_limit_status()["remaining_today"] == 9998
++
++
++@pytest.mark.asyncio
++async def test_second_401_does_not_create_refresh_loop(client, mock_httpx):
++    broker = mock_httpx.post(BROKER + "/etsy/token").respond(200, json=token())
++    etsy = mock_httpx.get(DEFAULT_BASE_URL + "/listings/1").respond(401, json={"error": "invalid_token"})
++    with pytest.raises(EtsyAuthError):
++        await client.get("/listings/1")
++    assert broker.call_count == 2 and etsy.call_count == 2
++
++
++@pytest.mark.asyncio
++@pytest.mark.parametrize("status,error", [(401, "invalid_api_key"), (401, "unauthorized"), (403, "invalid_token")])
++async def test_unrelated_auth_errors_do_not_trigger_refresh(client, mock_httpx, status, error):
++    broker = mock_httpx.post(BROKER + "/etsy/token").respond(200, json=token())
++    etsy = mock_httpx.get(DEFAULT_BASE_URL + "/listings/1").respond(status, json={"error": error})
++    with pytest.raises(EtsyAuthError):
++        await client.get("/listings/1")
++    assert broker.call_count == 1 and etsy.call_count == 1
++
++
++@pytest.mark.asyncio
++@pytest.mark.parametrize("method", ["post", "patch", "put", "delete"])
++async def test_write_401_notifies_broker_without_replaying_write(client, mock_httpx, method):
++    broker = mock_httpx.post(BROKER + "/etsy/token").respond(200, json=token())
++    etsy = mock_httpx.route(method=method.upper(), url=DEFAULT_BASE_URL + "/listings/1").respond(
++        401, json={"error": "invalid_token"}
++    )
++    with pytest.raises(EtsyAuthError, match="write was not retried"):
++        await getattr(client, method)("/listings/1")
++    assert etsy.call_count == 1 and broker.call_count == 2
++
++
++@pytest.mark.asyncio
++async def test_write_timeout_is_not_replayed_or_refreshed(client, mock_httpx):
++    broker = mock_httpx.post(BROKER + "/etsy/token").respond(200, json=token())
++    etsy = mock_httpx.post(DEFAULT_BASE_URL + "/listings").mock(side_effect=httpx.ReadTimeout("slow"))
++    with pytest.raises(EtsyPossiblyCompletedError):
++        await client.post("/listings", json={"title": "test"})
++    assert etsy.call_count == 1 and broker.call_count == 1
++
++
++@pytest.mark.asyncio
++async def test_concurrent_requests_keep_their_own_versions(client, mock_httpx):
++    normals = 0
++    rejected = []
++    waiting = 0
++    both_waiting = asyncio.Event()
++
++    def broker(request):
++        nonlocal normals
++        data = json.loads(request.content)
++        if "rejected_version" in data:
++            rejected.append(data["rejected_version"])
++            return httpx.Response(200, json=token(data["rejected_version"] + 10))
++        normals += 1
++        return httpx.Response(200, json=token(normals))
++
++    async def etsy(request):
++        nonlocal waiting
++        if request.headers["Authorization"] in {"Bearer 123.token-1", "Bearer 123.token-2"}:
++            waiting += 1
++            if waiting == 2:
++                both_waiting.set()
++            await asyncio.wait_for(both_waiting.wait(), 2)
++            return httpx.Response(401, json={"error": "invalid_token"})
++        return httpx.Response(200, json={"ok": True})
++
++    mock_httpx.post(BROKER + "/etsy/token").mock(side_effect=broker)
++    mock_httpx.get(DEFAULT_BASE_URL + "/listings/1").mock(side_effect=etsy)
++    results = await asyncio.gather(client.get("/listings/1"), client.get("/listings/1"))
++    assert results == [{"ok": True}, {"ok": True}]
++    assert sorted(rejected) == [1, 2]
++
++
++@pytest.mark.asyncio
++async def test_redirects_do_not_forward_credentials(client, mock_httpx):
++    broker = mock_httpx.post(BROKER + "/etsy/token").respond(
++        307, headers={"Location": "https://elsewhere.example/token"}
++    )
++    with pytest.raises(EtsyAuthError):
++        await client.get("/listings/1")
++    assert broker.call_count == 1
++
++
++@pytest.mark.asyncio
++async def test_status_allowlists_only_nonsecret_fields(auth):
++    with respx.mock as router:
++        router.get(BROKER + "/etsy/status").respond(
++            200,
++            json={
++                "state": "active",
++                "version": 2,
++                "expires_at": 1234,
++                "retry_after": 0,
++                "access_token": "PRIVATE",
++                "refresh_token": "PRIVATE",
++                "unexpected": "PRIVATE",
++            },
++        )
++        assert await auth.get_status() == {"state": "active", "version": 2, "expires_at": 1234, "retry_after": 0}
++    await auth.close()
++
++
++def test_broker_key_redacted():
++    assert redact_sensitive({"broker_key": "PRIVATE", "ETSY_BROKER_KEY": "PRIVATE"}) == {
++        "broker_key": REDACTED_PLACEHOLDER,
++        "ETSY_BROKER_KEY": REDACTED_PLACEHOLDER,
++    }

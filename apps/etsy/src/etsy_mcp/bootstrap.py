@@ -56,6 +56,9 @@ def _fallback_config_from_env() -> Any:
         etsy=SimpleNamespace(
             keystring=os.environ.get("ETSY_KEYSTRING", ""),
             shared_secret=os.environ.get("ETSY_SHARED_SECRET", ""),
+            broker_url=os.environ.get("ETSY_BROKER_URL", ""),
+            broker_key=os.environ.get("ETSY_BROKER_KEY", ""),
+            broker_timeout_seconds=os.environ.get("ETSY_BROKER_TIMEOUT_SECONDS", "60"),
             api_base=os.environ.get("ETSY_API_BASE", "https://api.etsy.com/v3/application"),
             timeout_seconds=float(os.environ.get("ETSY_TIMEOUT_SECONDS", "15")),
             rate_limit_per_second=float(os.environ.get("ETSY_RATE_LIMIT_PER_SECOND", "10")),
