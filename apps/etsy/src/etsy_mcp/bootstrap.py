@@ -70,5 +70,9 @@ def _fallback_config_from_env() -> Any:
             log_level=_LOG_LEVEL,
             permission_mode=os.environ.get("ETSY_TOOL_PERMISSION_MODE", "confirm"),
             diagnostics_enabled=os.environ.get("ETSY_DIAGNOSTICS_ENABLED", "false").lower() == "true",
+            transport=os.environ.get("ETSY_MCP_TRANSPORT", "stdio"),
+            host=os.environ.get("ETSY_MCP_HOST", "127.0.0.1"),
+            port=os.environ.get("ETSY_MCP_PORT", "8000"),
+            streamable_http_path=os.environ.get("ETSY_MCP_PATH", "/mcp"),
         ),
     )

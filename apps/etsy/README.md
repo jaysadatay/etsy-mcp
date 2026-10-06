@@ -35,11 +35,18 @@ uv run --package etsy-mcp etsy-mcp auth info
 # Or standalone authentication (without broker variables)
 etsy-mcp auth login
 
-# Run the server (stdio mode)
+# Run the server (stdio mode, default)
 uvx etsy-mcp@latest
 
 # Or against the workspace
 uv run --package etsy-mcp etsy-mcp
+
+# Run Streamable HTTP for a remote/server deployment
+uv run --package etsy-mcp etsy-mcp serve \
+  --transport streamable-http \
+  --host 127.0.0.1 \
+  --port 8000 \
+  --path /mcp
 ```
 
 ## Configuration
@@ -51,6 +58,10 @@ uv run --package etsy-mcp etsy-mcp
 | `ETSY_BROKER_URL` | With broker key | Service base URL, e.g. `http://etsy-token:8080` |
 | `ETSY_BROKER_KEY` | With broker URL | Token service `client_keys.mcp` value |
 | `ETSY_BROKER_TIMEOUT_SECONDS` | No | Broker request timeout; default 60 seconds |
+| `ETSY_MCP_TRANSPORT` | No | `stdio` (default) or `streamable-http` |
+| `ETSY_MCP_HOST` | HTTP only | Bind host; default `127.0.0.1` |
+| `ETSY_MCP_PORT` | HTTP only | Bind port; default `8000` |
+| `ETSY_MCP_PATH` | HTTP only | Streamable HTTP endpoint; default `/mcp` |
 | `ETSY_REFRESH_TOKEN` | No | Headless mode — bypass `auth login` by providing a pre-obtained refresh token |
 | `ETSY_TOKEN_STORE` | No | Override the tokens.json path. Default: `~/.config/etsy-mcp/tokens.json` |
 | `ETSY_TOOL_PERMISSION_MODE` | No | `confirm` (default) or `bypass` |

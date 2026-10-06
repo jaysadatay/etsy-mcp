@@ -94,6 +94,45 @@ Or in `claude_desktop_config.json`:
 }
 ```
 
+## Remote Docker deployment
+
+This fork supports both local stdio and long-running **Streamable HTTP** transport.
+The included Docker Compose file runs the MCP server continuously while keeping the
+host port loopback-only by default:
+
+```bash
+docker compose build
+docker compose up -d
+docker compose logs -f etsy-mcp
+```
+
+The MCP endpoint is then:
+
+```text
+http://127.0.0.1:8000/mcp
+```
+
+Put an authenticated HTTPS reverse proxy in front of that endpoint for remote
+clients. Do not expose the container port directly to the public internet. The
+MCP container joins the external `etsy-auth` Docker network and reaches the
+shared token service at `http://etsy-token:8080`.
+
+Local stdio remains the default:
+
+```bash
+uv run --package etsy-mcp etsy-mcp
+```
+
+You can also select Streamable HTTP explicitly without Docker:
+
+```bash
+uv run --package etsy-mcp etsy-mcp serve \
+  --transport streamable-http \
+  --host 127.0.0.1 \
+  --port 8000 \
+  --path /mcp
+```
+
 ## Configuration
 
 | Variable | Required | Purpose |
@@ -103,6 +142,10 @@ Or in `claude_desktop_config.json`:
 | `ETSY_BROKER_URL` | With broker key | Service base URL, e.g. `http://etsy-token:8080` |
 | `ETSY_BROKER_KEY` | With broker URL | Token service `client_keys.mcp`, not an Etsy token |
 | `ETSY_BROKER_TIMEOUT_SECONDS` | No | Broker timeout; default 60 seconds |
+| `ETSY_MCP_TRANSPORT` | No | `stdio` (default) or `streamable-http` |
+| `ETSY_MCP_HOST` | HTTP only | Bind host; default `127.0.0.1` |
+| `ETSY_MCP_PORT` | HTTP only | Bind port; default `8000` |
+| `ETSY_MCP_PATH` | HTTP only | Streamable HTTP path; default `/mcp` |
 | `ETSY_TOKEN_STORE` | Standalone only | Local token file override |
 | `ETSY_REFRESH_TOKEN` | Standalone only | Bootstrap from an existing refresh token |
 

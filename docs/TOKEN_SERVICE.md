@@ -42,9 +42,9 @@ uv run --package etsy-mcp etsy-mcp
 ```
 
 `auth info` calls `GET /etsy/status` and displays only state, version, expiry and
-retry delay. It does not fetch tokens or force a refresh. The second command
-starts the existing stdio MCP transport. This change does not add an HTTP MCP
-listener or change how the AI client connects to MCP.
+retry delay. It does not fetch tokens or force a refresh. The second command starts the default stdio transport. For a permanently running
+remote MCP endpoint, use the included Docker Compose deployment or start
+`streamable-http` explicitly. The HTTP endpoint defaults to `/mcp`.
 
 A host-based MCP client configuration for this checkout:
 
@@ -70,9 +70,10 @@ location of the MCP process, as described below.
 
 ## Same-host networking
 
-**MCP in Docker:** attach it to the service's `etsy-auth` network. Merge these
-additions into your existing Compose configuration, keeping its existing image,
-command, transport and network memberships:
+**MCP in Docker:** the repository's `docker-compose.yml` already attaches the MCP
+container to the external `etsy-auth` network and starts Streamable HTTP. The host
+port is loopback-only by default; place your authenticated HTTPS reverse proxy in
+front of it. A minimal equivalent configuration is:
 
 ```yaml
 services:

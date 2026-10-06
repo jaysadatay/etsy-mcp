@@ -42,3 +42,7 @@ jobs:
         env:
           ETSY_INTEGRATION_TESTS: ""
         run: make test-unit
+
+      - name: Build Docker image
+        if: runner.os == 'Linux'
+        run: docker build -t etsy-mcp:ci .
