@@ -1,6 +1,5 @@
 FROM python:3.13-slim-trixie AS builder
 
-# Pin uv for reproducible builds.
 COPY --from=ghcr.io/astral-sh/uv:0.12.23 /uv /uvx /bin/
 
 ENV UV_PYTHON_DOWNLOADS=0 \
@@ -9,14 +8,10 @@ ENV UV_PYTHON_DOWNLOADS=0 \
 
 WORKDIR /app
 
-# Copy only what is required for the workspace.
-# This deliberately avoids copying .env, .git, etc. into the image.
 COPY pyproject.toml uv.lock ./
 COPY apps ./apps
 COPY packages ./packages
 
-# Install only the etsy-mcp package and its workspace dependencies.
-# --no-editable lets us copy only the finished virtualenv into the runtime image.
 RUN uv sync \
     --locked \
     --package etsy-mcp \
@@ -24,17 +19,14 @@ RUN uv sync \
     --no-editable
 
 
-# ---------------------------------------------------------------------------
-# Runtime image
-# ---------------------------------------------------------------------------
 FROM python:3.13-slim-trixie AS runtime
 
 ENV PATH="/app/.venv/bin:${PATH}" \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    HOME=/home/etsy-mcp
+    HOME=/home/etsy-mcp \
+    XDG_CONFIG_HOME=/home/etsy-mcp/.config
 
-# Run the MCP server as an unprivileged user.
 RUN groupadd --system --gid 10001 etsy-mcp \
     && useradd \
         --system \
@@ -42,14 +34,16 @@ RUN groupadd --system --gid 10001 etsy-mcp \
         --gid 10001 \
         --create-home \
         --home-dir /home/etsy-mcp \
-        etsy-mcp
+        etsy-mcp \
+    && mkdir -p /home/etsy-mcp/.config/etsy-mcp \
+    && chown -R etsy-mcp:etsy-mcp /home/etsy-mcp
 
 WORKDIR /app
-
 COPY --from=builder /app/.venv /app/.venv
 
 USER etsy-mcp
 
-# This project currently uses MCP stdio transport.
+EXPOSE 8000
+
 ENTRYPOINT ["etsy-mcp"]
 CMD ["serve"]

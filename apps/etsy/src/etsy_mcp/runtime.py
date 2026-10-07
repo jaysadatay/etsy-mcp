@@ -110,14 +110,43 @@ def _create_permissioned_tool_wrapper(original_tool_decorator):
     return wrapper
 
 
+def _server_http_settings(cfg: Any) -> tuple[str, int, str, str]:
+    """Validate HTTP-related server settings before constructing FastMCP."""
+    host = str(getattr(cfg, "host", "127.0.0.1")).strip()
+    if not host:
+        raise ValueError("ETSY_MCP_HOST must not be empty.")
+
+    try:
+        port = int(getattr(cfg, "port", 8000))
+    except (TypeError, ValueError):
+        raise ValueError("ETSY_MCP_PORT must be an integer between 1 and 65535.") from None
+    if not 1 <= port <= 65535:
+        raise ValueError("ETSY_MCP_PORT must be an integer between 1 and 65535.")
+
+    path = str(getattr(cfg, "streamable_http_path", "/mcp")).strip()
+    if not path.startswith("/") or any(char.isspace() for char in path):
+        raise ValueError("ETSY_MCP_PATH must start with '/' and contain no whitespace.")
+
+    log_level = str(getattr(cfg, "log_level", "INFO")).upper()
+    if log_level not in {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}:
+        raise ValueError("ETSY_LOG_LEVEL must be DEBUG, INFO, WARNING, ERROR, or CRITICAL.")
+
+    return host, port, path, log_level
+
+
 @lru_cache
 def get_server() -> FastMCP:
     """Create the FastMCP server instance exactly once."""
+    cfg = get_config().server
+    host, port, path, log_level = _server_http_settings(cfg)
     server = FastMCP(
-        name="etsy-mcp",
+        name=str(getattr(cfg, "name", "etsy-mcp")),
         debug=False,
+        log_level=log_level,
+        host=host,
+        port=port,
+        streamable_http_path=path,
     )
-
     server._original_tool = server.tool
     server.tool = _create_permissioned_tool_wrapper(server._original_tool)
     return server

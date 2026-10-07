@@ -19,3 +19,7 @@ server:
   log_level: ${oc.env:ETSY_LOG_LEVEL,INFO}
   permission_mode: ${oc.env:ETSY_TOOL_PERMISSION_MODE,confirm}
   diagnostics_enabled: ${oc.env:ETSY_DIAGNOSTICS_ENABLED,false}
+  transport: ${oc.env:ETSY_MCP_TRANSPORT,stdio}
+  host: ${oc.env:ETSY_MCP_HOST,127.0.0.1}
+  port: ${oc.env:ETSY_MCP_PORT,8000}
+  streamable_http_path: ${oc.env:ETSY_MCP_PATH,/mcp}

@@ -7,30 +7,40 @@ services:
       dockerfile: Dockerfile
 
     image: etsy-mcp:local
+    restart: unless-stopped
+    init: true
 
     environment:
-      # Etsy application credentials
       ETSY_KEYSTRING: ${ETSY_KEYSTRING:?Set ETSY_KEYSTRING in .env}
       ETSY_SHARED_SECRET: ${ETSY_SHARED_SECRET:?Set ETSY_SHARED_SECRET in .env}
 
-      # Shared Etsy token service
       ETSY_BROKER_URL: ${ETSY_BROKER_URL:-http://etsy-token:8080}
       ETSY_BROKER_KEY: ${ETSY_BROKER_KEY:?Set ETSY_BROKER_KEY in .env}
       ETSY_BROKER_TIMEOUT_SECONDS: ${ETSY_BROKER_TIMEOUT_SECONDS:-60}
 
-      # Optional MCP configuration
+      ETSY_MCP_TRANSPORT: streamable-http
+      ETSY_MCP_HOST: 0.0.0.0
+      ETSY_MCP_PORT: 8000
+      ETSY_MCP_PATH: ${ETSY_MCP_PATH:-/mcp}
+
       ETSY_LOG_LEVEL: ${ETSY_LOG_LEVEL:-INFO}
       ETSY_TOOL_PERMISSION_MODE: ${ETSY_TOOL_PERMISSION_MODE:-confirm}
 
-    # MCP currently communicates using stdin/stdout.
-    stdin_open: true
-    tty: false
+    ports:
+      - "127.0.0.1:${ETSY_MCP_PUBLISHED_PORT:-8000}:8000"
 
-    init: true
-    restart: "no"
+    volumes:
+      - etsy-mcp-state:/home/etsy-mcp/.config/etsy-mcp
+
+    security_opt:
+      - no-new-privileges:true
 
     networks:
       - ai_net
+
+
+volumes:
+  etsy-mcp-state:
 
 
 networks:

@@ -33,6 +33,11 @@ Keep plain HTTP confined to a trusted same-host network. Broker login/logout are
 administered on the service; `auth info` exposes only allowlisted metadata.
 See [TOKEN_SERVICE.md](docs/TOKEN_SERVICE.md) for migration/recovery.
 
+When using Streamable HTTP, keep the MCP listener on loopback or a trusted private
+network unless it is protected by an authenticated HTTPS reverse proxy. The
+included Compose file publishes only to `127.0.0.1` by default. Do not expose the
+MCP mutation surface directly to the public internet.
+
 etsy-mcp brokers OAuth tokens and buyer PII from the Etsy API. The principal threats
 below describe the standalone OAuth flow unless stated otherwise:
 
