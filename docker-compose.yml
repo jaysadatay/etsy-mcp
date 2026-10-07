@@ -1,0 +1,39 @@
+name: etsy-mcp
+
+services:
+  etsy-mcp:
+    build:
+      context: .
+      dockerfile: Dockerfile
+
+    image: etsy-mcp:local
+
+    environment:
+      # Etsy application credentials
+      ETSY_KEYSTRING: ${ETSY_KEYSTRING:?Set ETSY_KEYSTRING in .env}
+      ETSY_SHARED_SECRET: ${ETSY_SHARED_SECRET:?Set ETSY_SHARED_SECRET in .env}
+
+      # Shared Etsy token service
+      ETSY_BROKER_URL: ${ETSY_BROKER_URL:-http://etsy-token:8080}
+      ETSY_BROKER_KEY: ${ETSY_BROKER_KEY:?Set ETSY_BROKER_KEY in .env}
+      ETSY_BROKER_TIMEOUT_SECONDS: ${ETSY_BROKER_TIMEOUT_SECONDS:-60}
+
+      # Optional MCP configuration
+      ETSY_LOG_LEVEL: ${ETSY_LOG_LEVEL:-INFO}
+      ETSY_TOOL_PERMISSION_MODE: ${ETSY_TOOL_PERMISSION_MODE:-confirm}
+
+    # MCP currently communicates using stdin/stdout.
+    stdin_open: true
+    tty: false
+
+    init: true
+    restart: "no"
+
+    networks:
+      - ai_net
+
+
+networks:
+  ai_net:
+    external: true
+    name: ai_net
